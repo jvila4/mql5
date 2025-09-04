@@ -1,0 +1,18 @@
+# Compilados de MetaTrader
+*.ex4
+*.ex5
+
+# Logs y temporales
+*.log
+*.tmp
+*.dat
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Carpetas de caché
+Profiles/
+Tester/
+Logs/
+Images/
