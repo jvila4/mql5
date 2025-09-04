@@ -96,9 +96,6 @@ int handleLRAC_Cur = INVALID_HANDLE;
 int handleLRAC_Htf = INVALID_HANDLE;
 int handleNonLag_HTF = INVALID_HANDLE;  // opcional NonLag en HTF
 
-// ÚNICO por gráfico para no pisar otros objetos
-string HUD_NAME = "SIMN_HUD_LRAC_" + IntegerToString((long)ChartID());
-
 // Mapa simple de pasos (M1→M5→M15→M30→H1→H4→D1→W1→MN1)
 ENUM_TIMEFRAMES TfFromSteps(ENUM_TIMEFRAMES base, int steps)
 {
@@ -133,39 +130,6 @@ string TfToStr(ENUM_TIMEFRAMES tf)
 enum LRAC_DIR { LRAC_FLAT=0, LRAC_UP=1, LRAC_DOWN=-1 };
 
 // ---------- Helpers de UI Debug ----------
-void PutLabel(const string name,
-              const string text,
-              const ENUM_BASE_CORNER corner,
-              const int x, const int y,
-              const color cText,
-              const int fontSize)
-{
-    // Usamos OBJ_RECTANGLE_LABEL para soportar texto multilínea y fondo.
-    if(ObjectFind(0, name)==-1)
-    {
-       if(!ObjectCreate(0, name, OBJ_RECTANGLE_LABEL, 0, 0, 0))
-       {
-          Print("Error creando el objeto del panel: ", GetLastError());
-          return;
-       }
-    }
-
-    // El objeto OBJ_RECTANGLE_LABEL maneja el texto de forma diferente a OBJ_LABEL.
-    // Necesitas ajustar las propiedades para que se muestre correctamente.
-    ObjectSetInteger(0, name, OBJPROP_CORNER,     corner);
-    ObjectSetInteger(0, name, OBJPROP_XDISTANCE,    x);
-    ObjectSetInteger(0, name, OBJPROP_YDISTANCE,    y);
-    ObjectSetInteger(0, name, OBJPROP_ANCHOR,     ANCHOR_RIGHT_UPPER); // Crece hacia la izquierda y abajo
-    ObjectSetInteger(0, name, OBJPROP_BACK,       false);   // Dibuja detrás de las velas
-    ObjectSetInteger(0, name, OBJPROP_HIDDEN,     false);   // No molesta en la lista de objetos
-    ObjectSetInteger(0, name, OBJPROP_BGCOLOR,    clrBlack); // Color de fondo del panel (ajustable)
-    ObjectSetInteger(0, name, OBJPROP_COLOR,      cText);  // Color del texto
-    ObjectSetInteger(0, name, OBJPROP_FONTSIZE,   fontSize);
-    ObjectSetString (0, name, OBJPROP_FONT,       "Tahoma");
-    ObjectSetString (0, name, OBJPROP_TEXT,       text);  // Aquí sí funcionan los saltos de línea '\n'
-    ObjectSetInteger(0, name, OBJPROP_BORDER_TYPE, BORDER_FLAT); // Borde plano opcional
-}
-
 
 // Función de ejemplo para pintar una línea
 void PutLine(string name, string text, int x, int y, color cText)
@@ -274,115 +238,6 @@ void OnDeinit(const int reason)
    if(handleNonLag_HTF!=INVALID_HANDLE) IndicatorRelease(handleNonLag_HTF);
    
    DelLines();
-}
-
-// pendiente media (pips/bar) sobre lookback
-bool LracSlopeDir(const double &mid[], int i, int lookback, double minSlopePips, LRAC_DIR &dir, double &slopePipsPerBar)
-{
-   if(i - lookback < 0) return false;
-   slopePipsPerBar = (mid[i] - mid[i - lookback]) / _Point / lookback;
-   if(MathAbs(slopePipsPerBar) < minSlopePips) { dir = LRAC_FLAT; }
-   else if(slopePipsPerBar > 0) { dir = LRAC_UP; }
-   else { dir = LRAC_DOWN; }
-   return true;
-}
-
-bool CopyLRAC3(int handle, int startIndex, int count, double &up[], double &lo[], double &mid[])
-{
-   ArrayResize(up,  count);
-   ArrayResize(lo,  count);
-   ArrayResize(mid, count);
-   int n0 = CopyBuffer(handle, 0, startIndex, count, up);
-   int n1 = CopyBuffer(handle, 1, startIndex, count, lo);
-   int n2 = CopyBuffer(handle, 2, startIndex, count, mid);
-   return (n0==count && n1==count && n2==count);
-}
-
-// Devuelve true si el ancho del canal (en pips) >= umbral
-bool LRAC_WidthOK(const double up, const double lo, double minWidthPips)
-{
-   return ((up - lo)/_Point) >= minWidthPips;
-}
-
-// Calcula pendiente (pips/bar) y dirección (-1,0,1) de la línea media (buffer 2)
-// en un handle LRAC cualquiera. shiftNow y lookback son en el MISMO TF del handle.
-bool LracSlopeAt(
-   const int handle,
-   const int shiftNow,
-   const int lookback,
-   double &slopePB,
-   int    &dirOut,
-   const string tag=""
-){
-   slopePB = 0.0; dirOut = 0;
-   if(handle==INVALID_HANDLE) { PrintFormat("[LRAC:%s] handle INVALID", tag); return false; }
-
-   int calc = BarsCalculated(handle);
-   if(calc<=0){ PrintFormat("[LRAC:%s] BarsCalculated=%d", tag, calc); return false; }
-
-   int prevShift = shiftNow + lookback;
-   if(prevShift >= calc){
-      PrintFormat("[LRAC:%s] prevShift=%d >= BarsCalculated=%d (lookback demasiado grande)", tag, prevShift, calc);
-      return false;
-   }
-
-   double now[1], prev[1];
-   int r1 = CopyBuffer(handle, 2, shiftNow,  1, now);
-   int r2 = CopyBuffer(handle, 2, prevShift, 1, prev);
-   if(r1!=1 || r2!=1){
-      PrintFormat("[LRAC:%s] CopyBuffer mid failed (now=%d prev=%d) shiftNow=%d prevShift=%d",
-                  tag, r1, r2, shiftNow, prevShift);
-      return false;
-   }
-   if(now[0]==EMPTY_VALUE || prev[0]==EMPTY_VALUE){
-      PrintFormat("[LRAC:%s] EMPTY_VALUE (now=%.5f prev=%.5f)", tag, now[0], prev[0]);
-      return false;
-   }
-
-   slopePB = (now[0] - prev[0])/_Point/lookback;
-   dirOut  = (MathAbs(slopePB) < LRAC_MinSlopePips) ? 0 : (slopePB>0 ? 1 : -1);
-   return true;
-}
-
-bool FindNonEmptyMid(const int handle, int startShift, const int maxProbe, int &outShift, double &outMid)
-{
-   for(int s = startShift; s < startShift + maxProbe; ++s)
-   {
-      double v[1];
-      if(CopyBuffer(handle, 2, s, 1, v) == 1 && v[0] != EMPTY_VALUE)
-      {
-         outShift = s;
-         outMid   = v[0];
-         return true;
-      }
-   }
-   return false;
-}
-
-
-// Función auxiliar para obtener la pendiente del LRAC en un TF específico
-// Devuelve la pendiente y la dirección en la barra 'shift' respecto a 'lookback' barras atrás
-bool GetLracSlope(
-    const int handle,
-    const int shift,
-    const int lookback,
-    double &slopePB,
-    int &dirOut
-)
-{
-    slopePB = 0.0;
-    dirOut = 0;
-    if (handle == INVALID_HANDLE) return false;
-
-    // Obtener los valores de la línea media del LRAC en la barra actual y la pasada
-    double midNow[1], midPrev[1];
-    if (CopyBuffer(handle, 2, shift, 1, midNow) != 1 || midNow[0] == EMPTY_VALUE) return false;
-    if (CopyBuffer(handle, 2, shift + lookback, 1, midPrev) != 1 || midPrev[0] == EMPTY_VALUE) return false;
-
-    slopePB = (midNow[0] - midPrev[0]) / _Point / lookback;
-    dirOut = (MathAbs(slopePB) < LRAC_MinSlopePips) ? 0 : (slopePB > 0 ? 1 : -1);
-
-    return true;
 }
 
 // --- Variables globales para el HUD ---
