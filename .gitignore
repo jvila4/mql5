@@ -16,3 +16,4 @@ Profiles/
 Tester/
 Logs/
 Images/
+*.log
