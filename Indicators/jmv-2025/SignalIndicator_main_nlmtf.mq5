@@ -38,16 +38,16 @@
 #property indicator_width3  2
 
 // Parámetros de entrada para el NonLag MA mtf
-input ENUM_TIMEFRAMES NL_TimeFrame = PERIOD_CURRENT;    // Time frame del NonLag MA
-input double          NL_Period    = 12;                // Periodo del NonLag MA, default 27
-input ENUM_APPLIED_PRICE NL_Price  = PRICE_WEIGHTED;    // Precio aplicado
-input bool            NL_Interpolate = true;            // Interpolación en modo MTF
+input ENUM_TIMEFRAMES NL_TimeFrame = PERIOD_CURRENT;  // Time frame del NonLag MA
+input double          NL_Period    = 7;               // Periodo del NonLag MA, default 27, tested also 12
+input ENUM_APPLIED_PRICE NL_Price  = PRICE_WEIGHTED;  // Precio aplicado
+input bool            NL_Interpolate = true;          // Interpolación en modo MTF
 
-input int    CanalPeriod = 40;                 // Periodo para canal sobre NonLagBuffer
-input double CanalWidthMultiplier = 1.5;        // Multiplicador de la desviación estándar
-input double CanalMarginRatio = 0.1;            // Ratio del canal desde el borde donde evitar señales
+input int    CanalPeriod               = 40;       // Periodo para canal sobre NonLagBuffer
+input double CanalWidthMultiplier      = 1.5;      // Multiplicador de la desviación estándar
+input double CanalMarginRatio          = 0.1;      // Ratio del canal desde el borde donde evitar señales
 
-input int Arrows_Offset = 5;              // Offset de flechas
+input int Arrows_Offset                = 5;        // Offset de flechas
 
 
 input bool UseStochasticFilter = false;  // Activar filtro estocástico
@@ -56,18 +56,16 @@ input int DPeriod = 3;
 input int Slowing = 3;
 
 // === Control de activación de filtros
-input bool  LRAC_FilterON              = false;    // LRAC - Activar filtro
+input bool  LRAC_FilterON                       = false;    // LRAC - Activar filtro
 // === Reglas de filtrado LRAC independientes ===
-input bool  LRAC_Rule1_MinWidth        = true;     // LRAC Regla 1: ancho mínimo del canal
-input bool  LRAC_Rule2_CorrectBand     = true;     // LRAC Regla 2: mitad correcta del canal
-// === Reglas LRAC (nuevas sub-reglas 3a/3b/3c) ===
-input bool  LRAC_Rule3a_HTF_BandMatchesSignal  = true;  // 3a: zona/mitad HTF compatible con la señal
-input bool  LRAC_Rule3b_HTF_SlopeMatchesSignal = true;  // 3b: pendiente HTF compatible con la señal (±1)
-input bool  LRAC_Rule3c_HTF_SlopeEqualsCTF     = false; // 3c: pendiente HTF igual a CTF (incluye FLAT)
-
-input bool  LRAC_Rule4_HTF_Dominant    = true;     // LRAC Regla 4: HTF dominante (solo compra si HTF alcista, etc.)
-input bool  NL_HTFColor_FilterON       = false;    // Requiere color NonLag en HTF
-input bool  EnableHUD                  = true;     // Mostrar/ocultar todo el HUD
+input bool  LRAC_Rule1_MinWidth                 = true;     // LRAC Regla 1: ancho mínimo del canal
+input bool  LRAC_Rule2_CorrectBand              = true;     // LRAC Regla 2: mitad correcta del canal
+input bool  LRAC_Rule3a_HTF_BandMatchesSignal   = false;    // LRAC Regla 3a: mitad HTF compatible con la señal
+input bool  LRAC_Rule3b_HTF_SlopeMatchesSignal  = false;    // LRAC Regla 3b: pend. HTF compatible con la señal (±1)
+input bool  LRAC_Rule3c_HTF_SlopeEqualsCTF      = false;    // LRAC Regla 3c: pend. HTF igual a CTF (incluye FLAT)
+input bool  LRAC_Rule4_HTF_Dominant             = false;    // LRAC Regla 4: HTF dominante (solo compra si HTF alcista, etc.)
+// === Reglas de filtrado NLMA independientes ===
+input bool  NLMA_Rule1_HTFColor_FilterON        = false;    // NLMA Regla 1: Requiere color NonLag en HTF
 
 // === Parámetros de LRAC ===
 input double LRAC_MinWidthPips         = 20.0;     // LRAC - Ancho mínimo del canal
@@ -79,22 +77,21 @@ input int    LRAC_HigherSteps          = 1;        // LRAC - N pasos TF superior
 input int    NL_HTFHigherSteps         = 3;        // NL - pasos TF arriba para filtro con NonLag
 
 // === Debug / Overlay ===
-input bool            DBG_ShowHUD   = true;               // Mostrar panel HUD
-input ENUM_BASE_CORNER DBG_HUDCorner = CORNER_RIGHT_UPPER;// Esquina
-input int             DBG_HUDX      = 200;                 // Desplazamiento X
-input int             DBG_HUDY      = 0;                 // Desplazamiento Y
-input int             DBG_FontSize  = 9;                  // Tamaño fuente
-input color           DBG_TextColor = clrWhite;           // Color texto
-input color           DBG_PanelGood = clrLime;            // Color si OK
-input color           DBG_PanelBad  = clrOrangeRed;       // Color si NO
-
+input bool  EnableHUD                  = true;              // Mostrar/ocultar todo el HUD
+input bool  DBG_ShowHUD                = true;              // Mostrar panel HUD
+input ENUM_BASE_CORNER  DBG_HUDCorner  = CORNER_RIGHT_UPPER;// Esquina
+input int   DBG_HUDX                   = 200;               // Desplazamiento X
+input int   DBG_HUDY                   = 0;                 // Desplazamiento Y
+input int   DBG_FontSize               = 9;                 // Tamaño fuente
+input color DBG_TextColor              = clrWhite;          // Color texto
+input color DBG_PanelGood              = clrLime;           // Color si OK
+input color DBG_PanelBad               = clrOrangeRed;      // Color si NO
 
 //--- Buffers
 double NonLagBuffer[];   // Línea principal del indicador
 double ColorBuffer[];    // Buffer de color del NonLag MA
 double DownNLBuffer[];   // Flechas de venta
 double UpNLBuffer[];     // Flechas de compra
-
 
 double kBuffer[], dBuffer[];
 
@@ -189,7 +186,7 @@ int OnInit()
    // parámetro de interpolación.
    // Usamos NL_TimeFrame como timeframe de llamada en iCustom para
    // permitir ejecución en otros marcos de tiempo.
-   handleNonLag = iCustom(_Symbol, NL_TimeFrame, "NonLag_MA_mtfi", 0, NL_Period, NL_Price, NL_Interpolate);
+   handleNonLag = iCustom(_Symbol, NL_TimeFrame, "jmv-2025/NonLag_MA_mtfi", 0, NL_Period, NL_Price, NL_Interpolate);
    if(handleNonLag == INVALID_HANDLE)
    {
       Print("No se pudo crear el handle del NonLag MA mtf");
@@ -204,31 +201,27 @@ int OnInit()
    }
    
    // --- LRAC en TF actual ---
-   handleLRAC_Cur = iCustom(
-      _Symbol, PERIOD_CURRENT, 
-      "LinearRegression_Adaptive_Channel"
+   handleLRAC_Cur = iCustom(_Symbol, PERIOD_CURRENT,"jmv-2025/LinearRegression_Adaptive_Channel"
    );
    if(handleLRAC_Cur==INVALID_HANDLE){ Print("❌ LRAC CUR inválido"); return INIT_FAILED; }
    
    // --- LRAC en TF superior ---
    ENUM_TIMEFRAMES tfHTF = TfFromSteps(Period(), LRAC_HigherSteps);
-   handleLRAC_Htf = iCustom(
-      _Symbol, tfHTF,
-      "LinearRegression_Adaptive_Channel"
+   handleLRAC_Htf = iCustom(_Symbol, tfHTF,"jmv-2025/LinearRegression_Adaptive_Channel"
    );
    if(handleLRAC_Htf==INVALID_HANDLE){ Print("❌ LRAC HTF inválido"); return INIT_FAILED; }
    
    // --- NonLag en HTF (opcional punto 4) ---
-   if(NL_HTFColor_FilterON){
+   if(NLMA_Rule1_HTFColor_FilterON){
       ENUM_TIMEFRAMES nlTF = TfFromSteps(Period(), NL_HTFHigherSteps);
-      handleNonLag_HTF = iCustom(_Symbol, nlTF, "NonLag_MA_mtfi", 0, NL_Period, NL_Price, NL_Interpolate);
+      handleNonLag_HTF = iCustom(_Symbol, nlTF, "jmv-2025/NonLag_MA_mtfi", 0, NL_Period, NL_Price, NL_Interpolate);
       if(handleNonLag_HTF==INVALID_HANDLE){ Print("❌ NonLag HTF inválido"); return INIT_FAILED; }
    }
    
    // 👉 Debug: imprime los HTF elegidos
    PrintFormat("SIMN ▶ BaseTF=%s | LRAC_HigherSteps=%d → LRAC_HTF=%s",
                TfToStr(Period()), LRAC_HigherSteps, TfToStr(tfHTF));
-   if(NL_HTFColor_FilterON)
+   if(NLMA_Rule1_HTFColor_FilterON)
       PrintFormat("SIMN ▶ BaseTF=%s | NL_HTFHigherSteps=%d → NL_HTF=%s",
                   TfToStr(Period()), NL_HTFHigherSteps,
                   TfToStr(TfFromSteps(Period(), NL_HTFHigherSteps)));
@@ -311,7 +304,7 @@ int OnCalculate(const int rates_total,
    }
    
    // Opcional: NonLag HTF SOLO si lo pides
-   if (NL_HTFColor_FilterON)
+   if (NLMA_Rule1_HTFColor_FilterON)
      ready &= (handleNonLag_HTF!=INVALID_HANDLE && BarsCalculated(handleNonLag_HTF)>0);
    
    if(!ready) return prev_calculated;
@@ -491,7 +484,7 @@ int OnCalculate(const int rates_total,
       
       // --------------- Filtro NL en HTF (opcional) ---------------
       bool nlAlignOK = false;
-      if(NL_HTFColor_FilterON){
+      if(NLMA_Rule1_HTFColor_FilterON){
          const datetime ti = time[i];
          //const int htfShift = iBarShift(_Symbol, tfNL_HTF, ti);
          const int htfShift = iBarShift(_Symbol, tfNL_HTF, ti, false);
@@ -511,7 +504,7 @@ int OnCalculate(const int rates_total,
       // --- Decisión final: Pintado de flechas si pasa todos los filtros ---         
       bool passAll = stochOK
                      && (!LRAC_FilterON || (passRule1 && passRule2 && passRule3a && passRule3b && passRule3c && passRule4))
-                     && (!NL_HTFColor_FilterON || nlAlignOK);
+                     && (!NLMA_Rule1_HTFColor_FilterON || nlAlignOK);
       
       if (isBuy && passAll) {
           UpNLBuffer[i] = close[i] + Arrows_Offset * _Point;
