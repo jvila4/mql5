@@ -20,25 +20,24 @@
 #property indicator_buffers 4
 #property indicator_plots   3
 
-// Configuración de plot de linea de indicador principal
+// Plot 1: NonLag MTFi línea coloreada
 #property indicator_label1  "NonLag MA Line"
 #property indicator_type1   DRAW_COLOR_LINE
 #property indicator_color1  clrDarkGray,clrDeepPink,clrLimeGreen
 #property indicator_width1  2
 
-// Configuración de plot de flechas de compra
+// Plot 2: flechas SELL
 #property indicator_label2  "Sell_NL_Signal"
 #property indicator_type2   DRAW_ARROW
 #property indicator_color2  clrDeepPink
 #property indicator_width2  2
 
-// Configuración de plot de flechas de venta
-#property indicator_label3  "Buy_NL_Signal"
+// Plot 3: flechas BUY
 #property indicator_type3   DRAW_ARROW
 #property indicator_color3  clrLimeGreen
 #property indicator_width3  2
 
-// Parámetros de entrada para el NonLag MA mtf
+// =================== Parámetros NonLag base ===================
 input ENUM_TIMEFRAMES NL_TimeFrame = PERIOD_CURRENT;  // Time frame del NonLag MA
 input double          NL_Period    = 7;               // Periodo del NonLag MA, default 27, tested also 12
 input ENUM_APPLIED_PRICE NL_Price  = PRICE_WEIGHTED;  // Precio aplicado
@@ -50,36 +49,42 @@ input double CanalMarginRatio          = 0.1;      // Ratio del canal desde el b
 
 input int Arrows_Offset                = 5;        // Offset de flechas
 
-
+// Estocástico opcional
 input bool UseStochasticFilter = false;  // Activar filtro estocástico
 input int KPeriod = 5;
 input int DPeriod = 3;
 input int Slowing = 3;
 
-// === Control de activación de filtros
+// =================== Reglas LRAC / NLMA ===================
 input bool  LRAC_FilterON                       = true;    // LRAC - Activar filtro
 input bool  LRAC_Rule1_MinWidth                 = true;     // LRAC Regla 1: ancho mínimo del canal
 input bool  LRAC_Rule2_CorrectBand              = true;     // LRAC Regla 2: mitad correcta del canal
 input bool  LRAC_Rule2_UseTolerance             = true;     // Permitir margen cerca de la media
 input double LRAC_Rule2_TolerancePct            = 0.15;     // 15% del ancho del canal como tolerancia
 input bool  LRAC_RequireTrendSide               = false;
-input bool  LRAC_Rule3a_HTF_BandMatchesSignal   = false;    // LRAC Regla 3a: mitad HTF compatible con la señal
+input bool  LRAC_Rule3a_HTF_BandMatchesSignal   = true;    // LRAC Regla 3a: mitad HTF compatible con la señal
 input bool  LRAC_Rule3b_HTF_SlopeMatchesSignal  = false;    // LRAC Regla 3b: pend. HTF compatible con la señal (±1)
 input bool  LRAC_Rule3c_HTF_SlopeEqualsCTF      = false;    // LRAC Regla 3c: pend. HTF igual a CTF (incluye FLAT)
 input bool  LRAC_Rule4_HTF_Dominant             = false;    // LRAC Regla 4: HTF dominante (solo compra si HTF alcista, etc.)
-// === Reglas de filtrado NLMA independientes ===
-input bool  NLMA_Rule1_HTFColor_FilterON        = false;    // NLMA Regla 1: Requiere color NonLag en HTF
 
-// === Parámetros de LRAC ===
+// NLMA HTF (color) como filtro opcional
+input bool  NLMA_Rule1_HTFColor_FilterON        = false;   // usar color NonLag en HTF como filtro
+
+// =================== Parámetros LRAC ===================
 input double LRAC_MinWidthPips         = 20.0;     // LRAC - Ancho mínimo del canal
 input double LRAC_MinSlopePips         = 2.0;      // LRAC - pendiente mínima (pips/bar) para considerar asc/desc
 input int    LRAC_SlopeLookbackBars    = 5;        // LRAC - nº de barras para medir pendiente
 input int    LRAC_HigherSteps          = 1;        // LRAC - N pasos TF superior (ej: de M1 a M15 = 3)
 
-// === Parámetros de NonLag_MA en HTF ===
+// =================== Parámetros NonLag HTF ===================
 input int    NL_HTFHigherSteps         = 3;        // NL - pasos TF arriba para filtro con NonLag
 
-// === Debug / Overlay ===
+// =================== TUS DOS FILTROS DE “ESPACIO” ===================
+// [CHANGE] NUEVOS inputs para asegurar recorrido útil
+input double MinCTF_DistOppPips        = 2.0;   // pips mínimos a banda opuesta en CTF
+input double HTF_MinDistFromMidPct     = 0.15;  // % de ancho HTF que debe separarle de la mid
+
+// =================== Debug / HUD ===================
 input bool  EnableHUD                  = true;              // Mostrar/ocultar todo el HUD
 input bool  DBG_ShowHUD                = true;              // Mostrar panel HUD
 input ENUM_BASE_CORNER  DBG_HUDCorner  = CORNER_RIGHT_UPPER;// Esquina
@@ -104,7 +109,8 @@ int handleLRAC_Cur = INVALID_HANDLE;
 int handleLRAC_Htf = INVALID_HANDLE;
 int handleNonLag_HTF = INVALID_HANDLE;  // opcional NonLag en HTF
 
-// Mapa simple de pasos (M1→M5→M15→M30→H1→H4→D1→W1→MN1)
+
+// ========= TF mapping helpers (M1→M5→M15→M30→H1→H4→D1→W1→MN1) =========
 ENUM_TIMEFRAMES TfFromSteps(ENUM_TIMEFRAMES base, int steps)
 {
    static const ENUM_TIMEFRAMES ladder[] = {
@@ -135,9 +141,7 @@ string TfToStr(ENUM_TIMEFRAMES tf)
    }
 }
 
-enum LRAC_DIR { LRAC_FLAT=0, LRAC_UP=1, LRAC_DOWN=-1 };
-
-// ---------- Helpers de UI Debug ----------
+// ---------- HUD helpers ----------
 
 // Función de ejemplo para pintar una línea
 void PutLine(string name, string text, int x, int y, color cText)
@@ -168,22 +172,22 @@ void DelLines()
     }
 }
 
-// Inicialización
+// ---------- Init ----------
 int OnInit()
 {
-   // Asignar buffers
+   // Buffers
    SetIndexBuffer(0, NonLagBuffer, INDICATOR_DATA);
    SetIndexBuffer(1, ColorBuffer, INDICATOR_COLOR_INDEX);
    SetIndexBuffer(2, DownNLBuffer, INDICATOR_DATA);
    SetIndexBuffer(3, UpNLBuffer, INDICATOR_DATA);
 
-   //s Configurar flechas (códigos Wingdings: 233 arriba, 234 abajo)
-   PlotIndexSetInteger(1, PLOT_ARROW, 234); // Venta: flecha abajo
-   PlotIndexSetInteger(2, PLOT_ARROW, 233); // Compra: flecha arriba  
+   // Flechas
+   PlotIndexSetInteger(1, PLOT_ARROW, 234); // Sell: flecha abajo
+   PlotIndexSetInteger(2, PLOT_ARROW, 233); // Buy : flecha arriba
    PlotIndexSetInteger(1, PLOT_LINE_WIDTH, 2);   
    PlotIndexSetInteger(2, PLOT_LINE_WIDTH, 2);
    
-   // Crear handle del indicador NonLag MA mtf
+   // NonLag MTFi (línea + color)
    // Pasamos los parámetros según el orden esperado por el indicador:
    // 0 (frame code por defecto), periodo, precio, y opcionalmente
    // parámetro de interpolación.
@@ -195,7 +199,8 @@ int OnInit()
       Print("No se pudo crear el handle del NonLag MA mtf");
       return INIT_FAILED;
    }
-   
+
+   // Estocástico opcional   
    handleStoch = iStochastic(_Symbol, NL_TimeFrame, KPeriod, DPeriod, Slowing, MODE_SMA, 0);
    if(handleStoch == INVALID_HANDLE)
    {
@@ -203,36 +208,37 @@ int OnInit()
       return INIT_FAILED;
    }
    
-   // --- LRAC en TF actual ---
+   // LRAC CTF (current timeframe)
    handleLRAC_Cur = iCustom(_Symbol, PERIOD_CURRENT,"jmv-2025/LinearRegression_Adaptive_Channel"
    );
    if(handleLRAC_Cur==INVALID_HANDLE){ Print("❌ LRAC CUR inválido"); return INIT_FAILED; }
    
-   // --- LRAC en TF superior ---
+   // LRAC HTF (higher timeframe)
    ENUM_TIMEFRAMES tfHTF = TfFromSteps(Period(), LRAC_HigherSteps);
    handleLRAC_Htf = iCustom(_Symbol, tfHTF,"jmv-2025/LinearRegression_Adaptive_Channel"
    );
    if(handleLRAC_Htf==INVALID_HANDLE){ Print("❌ LRAC HTF inválido"); return INIT_FAILED; }
    
-   // --- NonLag en HTF (opcional punto 4) ---
-   if(NLMA_Rule1_HTFColor_FilterON){
+   // NLMA HTF (opcional)
+   if(NLMA_Rule1_HTFColor_FilterON)
+   {
       ENUM_TIMEFRAMES nlTF = TfFromSteps(Period(), NL_HTFHigherSteps);
-      handleNonLag_HTF = iCustom(_Symbol, nlTF, "jmv-2025/NonLag_MA_mtfi", 0, NL_Period, NL_Price, NL_Interpolate);
+      handleNonLag_HTF = iCustom(_Symbol, nlTF, "jmv-2025/NonLag_MA_mtfi",
+                                 0, NL_Period, NL_Price, NL_Interpolate);
       if(handleNonLag_HTF==INVALID_HANDLE){ Print("❌ NonLag HTF inválido"); return INIT_FAILED; }
    }
    
-   // 👉 Debug: imprime los HTF elegidos
+   // Mensajes de depuración TF
    PrintFormat("SIMN ▶ BaseTF=%s | LRAC_HigherSteps=%d → LRAC_HTF=%s",
                TfToStr(Period()), LRAC_HigherSteps, TfToStr(tfHTF));
    if(NLMA_Rule1_HTFColor_FilterON)
       PrintFormat("SIMN ▶ BaseTF=%s | NL_HTFHigherSteps=%d → NL_HTF=%s",
-                  TfToStr(Period()), NL_HTFHigherSteps,
-                  TfToStr(TfFromSteps(Period(), NL_HTFHigherSteps)));
+                  TfToStr(Period()), NL_HTFHigherSteps, TfToStr(TfFromSteps(Period(), NL_HTFHigherSteps)));
 
    return INIT_SUCCEEDED;
 }
 
-// Liberación
+// ---------- Deinit ----------
 void OnDeinit(const int reason)
 {
    if(handleNonLag != INVALID_HANDLE) IndicatorRelease(handleNonLag);
@@ -244,7 +250,7 @@ void OnDeinit(const int reason)
    DelLines();
 }
 
-// --- Variables globales para el HUD ---
+// ---------- HUD globals ----------
 double hud_widthPips = 0.0;
 double hud_slopeCurPB = 0.0;
 double hud_slopeHtfPB = 0.0;
@@ -252,8 +258,7 @@ int hud_dirCur = 0;
 int hud_dirHtf = 0;
 bool hud_lracOK = false;
 bool hud_nlHtfOK = false;
-bool hud_isBuy = false;
-bool hud_isSell = false;
+
 
 // Función principal de cálculo
 int OnCalculate(const int rates_total,
@@ -270,7 +275,7 @@ int OnCalculate(const int rates_total,
    // Necesitamos al menos 3 barras: (previa, cerrada, en formación)
    if(rates_total < 3) return prev_calculated;
 
-   // Buffers de NonLag base (línea + color)
+   // NonLag buffers (línea+color)
    int nlCount = CopyBuffer(handleNonLag, 0, 0, rates_total, NonLagBuffer);
    int colCount = CopyBuffer(handleNonLag, 1, 0, rates_total, ColorBuffer);
    if (nlCount <= 0 || colCount <= 0) { Print("❌ NonLag_MA_mtfi sin datos"); return prev_calculated; }
@@ -281,13 +286,11 @@ int OnCalculate(const int rates_total,
    const int first = MathMax(1, prev_calculated -1);
    const int last_i = MathMin(last_closed, maxAvailable - 1);
  
-   // Asegurar sub-indicadores listos ---
+   // Subindicadores listos
    bool ready = (handleNonLag!=INVALID_HANDLE && BarsCalculated(handleNonLag)>0);
-   // Opcional: Stoch
    if (UseStochasticFilter)
      ready = ready && (handleStoch!=INVALID_HANDLE && BarsCalculated(handleStoch)>0);
      
-   // Opcional: LRAC (CTF y HTF) SOLO si vas a usar LRAC
    const bool anyLRACRule =
       LRAC_FilterON && ( LRAC_Rule1_MinWidth
                       || LRAC_Rule2_CorrectBand
@@ -308,6 +311,7 @@ int OnCalculate(const int rates_total,
                                  || LRAC_Rule4_HTF_Dominant );
       if(needHTF_rules)
          ready = ready && (handleLRAC_Htf!=INVALID_HANDLE && BarsCalculated(handleLRAC_Htf)>0);
+    
    }
    
    if (NLMA_Rule1_HTFColor_FilterON)
@@ -315,26 +319,27 @@ int OnCalculate(const int rates_total,
    
    if(!ready) return prev_calculated;
 
-   // --- Estocástico (opcional)      
+   // Estocástico opcional     
    if(UseStochasticFilter)
    {
       if(CopyBuffer(handleStoch, 0, 0, rates_total, kBuffer) <= 0 ||
          CopyBuffer(handleStoch, 1, 0, rates_total, dBuffer) <= 0)
          {
-            Print("❌ Stoch sin datos"); return prev_calculated;
+            Print("❌ Stoch sin datos"); 
+            return prev_calculated;
          }
    }
    
    // TFs superiores precalculados
    ENUM_TIMEFRAMES tfLRAC_HTF = TfFromSteps(Period(), LRAC_HigherSteps);
    ENUM_TIMEFRAMES tfNL_HTF   = TfFromSteps(Period(), NL_HTFHigherSteps);
-   
+      
    // Limpia flechas a recalcular
    for (int i = first; i <= last_i; ++i){ UpNLBuffer[i]=EMPTY_VALUE; DownNLBuffer[i]=EMPTY_VALUE; }
 
    //int signalsTotal=0, signalsAccepted=0;
       
-   // ======= Settings para SR_Evaluate (centralizado) =======
+   // ===== Settings para SR_Evaluate =====
    SR_Settings S;
    S.LRAC_Rule1_MinWidth                = LRAC_Rule1_MinWidth;
    S.LRAC_Rule2_CorrectBand             = LRAC_Rule2_CorrectBand;
@@ -345,25 +350,14 @@ int OnCalculate(const int rates_total,
    S.NLMA_Rule1_HTFColor_FilterON       = NLMA_Rule1_HTFColor_FilterON;
    
    S.LRAC_MinWidthPips                  = LRAC_MinWidthPips;
-      
    S.LRAC_Rule2_UseTolerance            = LRAC_Rule2_UseTolerance;
    S.LRAC_Rule2_TolerancePct            = LRAC_Rule2_TolerancePct;
-   
    S.LRAC_RequireTrendSide              = LRAC_RequireTrendSide;
-   
-   // Si LRAC_FilterON está en false, anula TODAS las reglas LRAC/NLMA:
-   /*
-   if(!LRAC_FilterON){
-      S.LRAC_Rule1_MinWidth=false;
-      S.LRAC_Rule2_CorrectBand=false;
-      S.LRAC_Rule3a_HTF_BandMatchesSignal=false;
-      S.LRAC_Rule3b_HTF_SlopeMatchesSignal=false;
-      S.LRAC_Rule3c_HTF_SlopeEqualsCTF=false;
-      S.LRAC_Rule4_HTF_Dominant=false;
-      S.NLMA_Rule1_HTFColor_FilterON=false;
-   }
-   */
-   
+
+   // [CHANGE] Aplica tus filtros de “espacio”
+   S.MinCTF_DistOppPips                 = MinCTF_DistOppPips;
+   S.HTF_MinDistFromMidPct              = HTF_MinDistFromMidPct;   
+
    // ========================== Bucle de señales ==========================
    for (int i = first; i <= last_i; ++i)
    {
@@ -372,14 +366,13 @@ int OnCalculate(const int rates_total,
       // Señal base por color NonLag + vela
       int currentColor = (int)ColorBuffer[i];
       int prevColor    = (int)ColorBuffer[i-1];
-
-      bool isBuy  = (currentColor == 2 && prevColor != 2 /*&& close[i] >= open[i]*/);
-      bool isSell = (currentColor == 1 && prevColor != 1 /*&& close[i] <= open[i]*/);
+      bool isBuy  = (currentColor == 2 && prevColor != 2 && close[i] >= open[i]);
+      bool isSell = (currentColor == 1 && prevColor != 1 && close[i] <= open[i]);
       if(!isBuy && !isSell) continue;
 
       //signalsTotal++;
       
-      // Estocástico ON -> filtra
+      // Estocástico opcional
       if(UseStochasticFilter)
       {
          const double k=kBuffer[i], d=dBuffer[i];
@@ -396,8 +389,7 @@ int OnCalculate(const int rates_total,
       const bool needCTF_rules = anyLRACRule && (  LRAC_Rule1_MinWidth
                                                 || LRAC_Rule2_CorrectBand
                                                 || LRAC_Rule3c_HTF_SlopeEqualsCTF );
-      // CTF adicional por tolerancia o trend guard
-      const bool needCTF_extra = anyLRACRule && ( LRAC_Rule2_UseTolerance || LRAC_RequireTrendSide );
+      const bool needCTF_extra = anyLRACRule && ( LRAC_Rule2_UseTolerance || LRAC_RequireTrendSide);
       const bool needCTF       = needCTF_rules || needCTF_extra;
 
       const bool needHTF_rules = anyLRACRule && (  LRAC_Rule3a_HTF_BandMatchesSignal
@@ -405,105 +397,89 @@ int OnCalculate(const int rates_total,
                                                 || LRAC_Rule3c_HTF_SlopeEqualsCTF
                                                 || LRAC_Rule4_HTF_Dominant );
 
-      // Defaults sin LRAC
-      /*
-      I.widthPipsCTF = 0.0;
-      I.inLowerCTF   = false;
-      I.dirCTF       = SR_FLAT;
-      I.haveHTF      = false;
-      I.inLowerHTF   = false;
-      I.dirHTF       = SR_FLAT;
-      */
-      
-      // ---- CTF (si se necesita)
-      bool   haveCTF      = false;
-      double midCTF       = 0.0, widthCTFpx   = 0.0;
-      int    dirCurInt    = 0;
-      
-      if(needCTF && handleLRAC_Cur!=INVALID_HANDLE && BarsCalculated(handleLRAC_Cur)>0)
+      // ---------- CTF (LRAC CUR) ----------
+      if(needCTF && handleLRAC_Cur!=INVALID_HANDLE /* && BarsCalculated(handleLRAC_Cur)>0 */)
       {
-         const int sh     = (rates_total - 1) - i;         // 0=actual, 1=última cerrada, etc.
-         const int shPrev = sh + LRAC_SlopeLookbackBars;   // lookback coherente
-      
-         // Seguridad: no pedir shifts negativos
-         if(sh >= 0 && shPrev >= 0)
-         {
-            double upCur[1], loCur[1], midNow[1], midPrev[1];
-            bool okCTF = (CopyBuffer(handleLRAC_Cur,0,sh,1,upCur)==1) &&
-                         (CopyBuffer(handleLRAC_Cur,1,sh,1,loCur)==1) &&
-                         (CopyBuffer(handleLRAC_Cur,2,sh,1,midNow)==1) &&
-                         (CopyBuffer(handleLRAC_Cur,2,shPrev,1,midPrev)==1) &&
-                         (upCur[0]!=EMPTY_VALUE && loCur[0]!=EMPTY_VALUE &&
-                          midNow[0]!=EMPTY_VALUE && midPrev[0]!=EMPTY_VALUE);
-            if(okCTF)
-            {
-               const double slopeCurPB = (midNow[0]-midPrev[0])/_Point/LRAC_SlopeLookbackBars;
-               dirCurInt  = (MathAbs(slopeCurPB) < LRAC_MinSlopePips) ? 0 : (slopeCurPB>0 ? 1 : -1);
-               widthCTFpx = (upCur[0]-loCur[0]);
-               midCTF     = midNow[0];
-               haveCTF    = true;
-      
-               // Rellenar inputs (si alguna regla lo pide o para tol/trend)
-               I.widthPipsCTF = widthCTFpx/_Point;
-               I.inLowerCTF   = (close[i] <= midCTF);
-               I.dirCTF       = (dirCurInt>0 ? SR_UP : (dirCurInt<0 ? SR_DOWN : SR_FLAT));
-               I.priceCTF      = close[i];   //  precio de referencia CTF
-               I.midCTF        = midCTF;     //  media del canal (precio)
-               I.widthPriceCTF = widthCTFpx; //  ancho del canal en precio               
-            }
-            else if(needCTF) { continue; }   // si era necesario y no hay datos
-         }
-         else if(needCTF) { continue; }
+         int sh     = (rates_total - 1) - i;              // índice barra cerrada exacto
+         int shPrev = sh + LRAC_SlopeLookbackBars;
+         if(sh<0 || shPrev<0) continue;
+         
+         double upCur[1], loCur[1], midNow[1], midPrev[1];
+         bool okCTF = (CopyBuffer(handleLRAC_Cur,0,sh,1,upCur)==1) &&
+                      (CopyBuffer(handleLRAC_Cur,1,sh,1,loCur)==1) &&
+                      (CopyBuffer(handleLRAC_Cur,2,sh,1,midNow)==1) &&
+                      (CopyBuffer(handleLRAC_Cur,2,shPrev,1,midPrev)==1) &&
+                      (upCur[0]!=EMPTY_VALUE && loCur[0]!=EMPTY_VALUE &&
+                       midNow[0]!=EMPTY_VALUE && midPrev[0]!=EMPTY_VALUE);
+         if(!okCTF) continue;
+
+         const double slopeCurPB = (midNow[0]-midPrev[0])/_Point/LRAC_SlopeLookbackBars;
+         const int dirCurInt     = (MathAbs(slopeCurPB) < LRAC_MinSlopePips) ? 0 : (slopeCurPB>0 ? 1 : -1);
+         const double widthCTFpx = (upCur[0]-loCur[0]);
+         const double midCTF     = midNow[0];
+
+         I.widthPipsCTF  = widthCTFpx/_Point;
+         I.inLowerCTF    = (close[i] <= midCTF);
+         I.dirCTF        = (dirCurInt>0 ? SR_UP : (dirCurInt<0 ? SR_DOWN : SR_FLAT));
+         I.priceCTF      = close[i];
+         I.midCTF        = midCTF;
+         I.widthPriceCTF = widthCTFpx;
+         I.upCTF          = upCur[0];        // bandas CTF para filtro de distancia
+         I.loCTF          = loCur[0];         
       }
       
       
-      // ---- HTF (si reglas lo piden)
-      if(needHTF_rules)
+      // ---------- HTF (LRAC HTF) ----------
+      if(needHTF_rules && handleLRAC_Htf!=INVALID_HANDLE)
       {
-         const int htfShift0 = iBarShift(_Symbol, tfLRAC_HTF, time[i], false);
-         if(htfShift0 >= 0)
-         {
-            double midNowHTF[1], midPrevHTF[1];
-            bool okPend = (CopyBuffer(handleLRAC_Htf,2,htfShift0,1,midNowHTF)==1) &&
-                          (CopyBuffer(handleLRAC_Htf,2,htfShift0+LRAC_SlopeLookbackBars,1,midPrevHTF)==1) &&
-                          (midNowHTF[0]!=EMPTY_VALUE && midPrevHTF[0]!=EMPTY_VALUE);
-            if(okPend)
-            {
-               const double slopeHtfPB = (midNowHTF[0]-midPrevHTF[0])/_Point/LRAC_SlopeLookbackBars;
-               const int    dirHtfInt  = (MathAbs(slopeHtfPB) < LRAC_MinSlopePips) ? 0 : (slopeHtfPB>0 ? 1 : -1);
+         // alineamos al **cierre** de la barra CTF i
+         int htfShift0 = iBarShift(_Symbol, tfLRAC_HTF, time[i], false);
+         if(htfShift0<0) continue;
 
-               double midOnly[1], htfClose[1];
-               const bool okMidNow = (CopyBuffer(handleLRAC_Htf,2,htfShift0,1,midOnly)==1 && midOnly[0]!=EMPTY_VALUE);
-               const bool okClose  = (CopyClose(_Symbol, tfLRAC_HTF, htfShift0, 1, htfClose)==1);
+         double midNowHTF[1], midPrevHTF[1];
+         bool okPend = (CopyBuffer(handleLRAC_Htf,2,htfShift0,1,midNowHTF)==1) &&
+                       (CopyBuffer(handleLRAC_Htf,2,htfShift0+LRAC_SlopeLookbackBars,1,midPrevHTF)==1) &&
+                       (midNowHTF[0]!=EMPTY_VALUE && midPrevHTF[0]!=EMPTY_VALUE);
+         if(!okPend) continue;
 
-               I.haveHTF    = okMidNow && okClose;
-               I.inLowerHTF = (I.haveHTF ? (htfClose[0] <= midOnly[0]) : false);
-               I.dirHTF     = (dirHtfInt>0 ? SR_UP : (dirHtfInt<0 ? SR_DOWN : SR_FLAT));
-            }
-            else { continue; } // HTF requerido y no disponible
-         }
-         else { continue; }
+         const double slopeHtfPB = (midNowHTF[0]-midPrevHTF[0])/_Point/LRAC_SlopeLookbackBars;
+         const int    dirHtfInt  = (MathAbs(slopeHtfPB) < LRAC_MinSlopePips) ? 0 : (slopeHtfPB>0 ? 1 : -1);
+
+         double upH[1], loH[1], cH[1];
+         bool okBands = (CopyBuffer(handleLRAC_Htf,0,htfShift0,1,upH)==1 && upH[0]!=EMPTY_VALUE &&
+                         CopyBuffer(handleLRAC_Htf,1,htfShift0,1,loH)==1 && loH[0]!=EMPTY_VALUE);
+         bool okClose = (CopyClose(_Symbol, tfLRAC_HTF, htfShift0, 1, cH)==1);
+
+         if(!(okBands && okClose)) continue;
+
+         I.haveHTF        = true;
+         I.dirHTF         = (dirHtfInt>0 ? SR_UP : (dirHtfInt<0 ? SR_DOWN : SR_FLAT));
+         I.priceHTF       = cH[0];
+         I.midHTF         = midNowHTF[0];
+         I.upHTF          = upH[0];          // bandas HTF para tu 2º filtro
+         I.loHTF          = loH[0];
+         I.widthPriceHTF  = (upH[0]-loH[0]);
+         I.inLowerHTF     = (I.priceHTF <= I.midHTF);
       }      
-      
-      // ---- NLMA HTF (opcional)
-      I.haveNLHTF  = false;
-      I.nlColorHTF = 0;
-      if(NLMA_Rule1_HTFColor_FilterON)
+
+      // ---------- NLMA HTF color (opcional) ----------
+      I.haveNLHTF=false; I.nlColorHTF=0;
+      if(NLMA_Rule1_HTFColor_FilterON && handleNonLag_HTF!=INVALID_HANDLE)
       {
-         const int htfShift = iBarShift(_Symbol, tfNL_HTF, time[i], false);
-         if(htfShift >= 0)
+         int htfShift = iBarShift(_Symbol, tfNL_HTF, time[i], false);
+         if(htfShift>=0)
          {
             double col[1];
-            if(CopyBuffer(handleNonLag_HTF, 1, htfShift, 1, col) == 1)
+            if(CopyBuffer(handleNonLag_HTF,1,htfShift,1,col)==1)
             { I.haveNLHTF=true; I.nlColorHTF=(int)col[0]; }
          }
-      }     
+      }
+   
       
-      // ===== Evaluación centralizada =====
+      // ---------- Evaluación centralizada ----------
       const bool rulesEnabled = (LRAC_FilterON || NLMA_Rule1_HTFColor_FilterON);
-      // Si no hay filtros activos, acepta la señal base;
-      // si hay filtros, evalúa normalmente.
       bool pass = (!rulesEnabled) ? true : SR_Evaluate(S, I).passAll;
+      
       /*                              
       if(rulesEnabled && !pass){
          PrintFormat("SR_FAIL i=%d buy=%d sell=%d width=%.1f dir=%d inLower=%d",
@@ -511,7 +487,7 @@ int OnCalculate(const int rates_total,
       }
       */      
                                     
-      // ====== Pintado de flechas ======
+      // ---------- Pintado de flechas ----------
       if(pass) 
       {
          if (isBuy)  UpNLBuffer[i]   = close[i] + Arrows_Offset * _Point;
@@ -523,62 +499,51 @@ int OnCalculate(const int rates_total,
    // ============================== HUD ======================================
    if(EnableHUD)
    {
-      int lastBar = rates_total - 2;   // última cerrada real
-      if (lastBar < 1) lastBar = 1;      
-      
-      // Señal del HUD basada en lo que realmente se pintó
+      int lastBar = rates_total - 2;
+      if(lastBar < 1) lastBar = 1;
+
       bool hudSigBuy  = (UpNLBuffer[lastBar]   != EMPTY_VALUE);
       bool hudSigSell = (DownNLBuffer[lastBar] != EMPTY_VALUE);
-      
+
       // Reset
-      hud_widthPips = 0.0;
-      hud_slopeCurPB = 0.0;
-      hud_slopeHtfPB = 0.0;
-      hud_dirCur = 0;
-      hud_dirHtf = 0;
-      hud_lracOK = false;        // "tenemos datos LRAC válidos"
-      hud_nlHtfOK = (handleNonLag_HTF!=INVALID_HANDLE ? false : true); // si no hay handle, lo marcamos como no-aplica
-      
-      // --- Métricas LRAC (CUR & HTF) SIEMPRE que haya handles válidos ---
+      hud_widthPips=0.0; hud_slopeCurPB=0.0; hud_slopeHtfPB=0.0;
+      hud_dirCur=0; hud_dirHtf=0;
+      hud_lracOK=false;
+      hud_nlHtfOK = (handleNonLag_HTF!=INVALID_HANDLE ? false : true);
+
+      // Métricas LRAC
       if(handleLRAC_Cur!=INVALID_HANDLE && handleLRAC_Htf!=INVALID_HANDLE)
       {
-         // 1. Ancho actual
          double upCur[1], loCur[1];
-         if (CopyBuffer(handleLRAC_Cur, 0, 1, 1, upCur) == 1 && upCur[0] != EMPTY_VALUE &&
-             CopyBuffer(handleLRAC_Cur, 1, 1, 1, loCur) == 1 && loCur[0] != EMPTY_VALUE)
-         {
-            hud_widthPips = (upCur[0] - loCur[0]) / _Point;
-         }
-         
-         // 2. Pendiente CTF
-         double midCur_i[1], midCur_prev[1];
-         bool okMidNow  = (CopyBuffer(handleLRAC_Cur, 2, 1, 1, midCur_i) == 1);
-         bool okMidPrev = (CopyBuffer(handleLRAC_Cur, 2, 1 + LRAC_SlopeLookbackBars, 1, midCur_prev) == 1);
+         if (CopyBuffer(handleLRAC_Cur, 0, 1, 1, upCur)==1 && upCur[0]!=EMPTY_VALUE &&
+             CopyBuffer(handleLRAC_Cur, 1, 1, 1, loCur)==1 && loCur[0]!=EMPTY_VALUE)
+            hud_widthPips = (upCur[0]-loCur[0])/_Point;
 
-         if (okMidNow && okMidPrev && midCur_i[0] != EMPTY_VALUE && midCur_prev[0] != EMPTY_VALUE)
+         double midNow[1], midPrev[1];
+         bool okNow =(CopyBuffer(handleLRAC_Cur,2,1,1,midNow)==1);
+         bool okPrv =(CopyBuffer(handleLRAC_Cur,2,1+LRAC_SlopeLookbackBars,1,midPrev)==1);
+         if(okNow && okPrv && midNow[0]!=EMPTY_VALUE && midPrev[0]!=EMPTY_VALUE)
          {
-            hud_slopeCurPB = (midCur_i[0] - midCur_prev[0]) / _Point / LRAC_SlopeLookbackBars;
-            hud_dirCur = (MathAbs(hud_slopeCurPB) < LRAC_MinSlopePips) ? 0 : (hud_slopeCurPB > 0 ? 1 : -1);
+            hud_slopeCurPB=(midNow[0]-midPrev[0])/_Point/LRAC_SlopeLookbackBars;
+            hud_dirCur=(MathAbs(hud_slopeCurPB)<LRAC_MinSlopePips?0:(hud_slopeCurPB>0?1:-1));
 
-            // 3) pendiente HTF
-            int htfShift_now = iBarShift(_Symbol, tfLRAC_HTF, time[rates_total - 1], false);
-            if (htfShift_now >= 0)
+            int htfShift_now=iBarShift(_Symbol, tfLRAC_HTF, time[rates_total-1], false);
+            if(htfShift_now>=0)
             {
-               double midH_now[1], midH_prev[1];
-               bool okHnow  = (CopyBuffer(handleLRAC_Htf, 2, htfShift_now, 1, midH_now) == 1);
-               bool okHprev = (CopyBuffer(handleLRAC_Htf, 2, htfShift_now + LRAC_SlopeLookbackBars, 1, midH_prev) == 1);
-
-               if (okHnow && okHprev && midH_now[0] != EMPTY_VALUE && midH_prev[0] != EMPTY_VALUE)
+               double mH[1], mHp[1];
+               bool okH =(CopyBuffer(handleLRAC_Htf,2,htfShift_now,1,mH)==1);
+               bool okHp=(CopyBuffer(handleLRAC_Htf,2,htfShift_now+LRAC_SlopeLookbackBars,1,mHp)==1);
+               if(okH && okHp && mH[0]!=EMPTY_VALUE && mHp[0]!=EMPTY_VALUE)
                {
-                  hud_slopeHtfPB = (midH_now[0] - midH_prev[0]) / _Point / LRAC_SlopeLookbackBars;
-                  hud_dirHtf     = (MathAbs(hud_slopeHtfPB) < LRAC_MinSlopePips) ? 0 : (hud_slopeHtfPB > 0 ? 1 : -1);
-                  hud_lracOK     = true;
+                  hud_slopeHtfPB=(mH[0]-mHp[0])/_Point/LRAC_SlopeLookbackBars;
+                  hud_dirHtf=(MathAbs(hud_slopeHtfPB)<LRAC_MinSlopePips?0:(hud_slopeHtfPB>0?1:-1));
+                  hud_lracOK=true;
                }
             }
          }
       }
-      
-      // --- Alineación NonLag en HTF para HUD (si hay handle disponible) ---
+
+      // NLMA HTF en HUD
       if(handleNonLag_HTF!=INVALID_HANDLE)
       {
          int htfIndex = iBarShift(_Symbol, tfNL_HTF, time[lastBar], false);
@@ -587,15 +552,12 @@ int OnCalculate(const int rates_total,
             double col[1];
             if(CopyBuffer(handleNonLag_HTF, 1, htfIndex, 1, col)==1)
             {
-               int c = (int)col[0];  // 0 gris, 1 rosa, 2 verde
+               int c=(int)col[0]; // 0 gris, 1 rosa, 2 verde
                hud_nlHtfOK = ( (hudSigBuy && c==2) || (hudSigSell && c==1) );
             }
          }
       }
-      
-      // ---------------- Dibuja HUD ----------------
-      //if(DBG_ShowHUD)
-      //{
+
       string sdirCur = (hud_dirCur>0?"UP":(hud_dirCur<0?"DOWN":"FLAT"));
       string sdirHtf = (hud_dirHtf>0?"UP":(hud_dirHtf<0?"DOWN":"FLAT"));
       string sSig    = hudSigBuy ? "BUY" : (hudSigSell ? "SELL" : "—");
@@ -607,12 +569,12 @@ int OnCalculate(const int rates_total,
       PutLine("line5", StringFormat(" htf: %s (%.2f pips/b)", sdirHtf, hud_slopeHtfPB), DBG_HUDX, DBG_HUDY + 70, clrWhite);
       PutLine("line6", StringFormat(" OK: LRAC=%s | NLhtf=%s",
                 hud_lracOK?"Y":"N", hud_nlHtfOK?"Y":"N"), DBG_HUDX, DBG_HUDY + 85, clrWhite);
-                 
    }
    else
    {
       DelLines();
    }
+   
    // -----------------------------------------------------------------------
    
    //Print("Señales totales: ", signalsTotal, ", aceptadas tras filtro: ", signalsAccepted);
